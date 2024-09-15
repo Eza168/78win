@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://78win.la/sitemap.xml
+Sitemap: http://hflight.net/gacor/sitemap.xml
