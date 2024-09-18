@@ -34,331 +34,411 @@ if (isset($_GET['error']) && $_GET['error'] == 'notice') {
     exit;
 }
 /**
- * Customize API: WP_Customize_Partial class
- *
- * @package WordPress
- * @subpackage Customize
- * @since 4.5.0
+ * @package AkeebaBackup
+ * @copyright Copyright (c)2006-2011 Nicholas K. Dionysopoulos
+ * @license GNU General Public License version 3, or later
+ * @version $Id: fsfilter.php 409 2011-01-24 09:30:22Z nikosdion $
+ * @since 3.0
  */
+
+// Protect from unauthorized access
+defined('_JEXEC') or die('Restricted Access');
+
+jimport('joomla.application.component.model');
 
 /**
- * Core Customizer class for implementing selective refresh partials.
+ * Filesystem Filter model
  *
- * Representation of a rendered region in the previewed page that gets
- * selectively refreshed when an associated setting is changed.
- * This class is analogous of WP_Customize_Control.
- *
- * @since 4.5.0
  */
-#[AllowDynamicProperties]
-class WP_Customize_Partial {
-
+class AkeebaModelFsfilter extends JModel
+{
 	/**
-	 * Component.
-	 *
-	 * @since 4.5.0
-	 * @var WP_Customize_Selective_Refresh
+	 * Returns a listing of contained directories and files, as well as their
+	 * exclusion status
+	 * @param string $root The root directory
+	 * @param string $node The subdirectory to scan
+	 * @return array
 	 */
-	public $component;
+	private function &get_listing($root, $node)
+	{
+		// Initialize the absolute directory root
+		$directory = substr($root,0);
+		// Replace stock directory tags, like [SITEROOT]
+		$stock_dirs = AEPlatform::get_stock_directories();
+		if(!empty($stock_dirs))
+		{
+			foreach($stock_dirs as $key => $replacement)
+			{
+				$directory = str_replace($key, $replacement, $directory);
+			}
+		}
+		$directory = AEUtilFilesystem::TranslateWinPath($directory);
+		// Clean and add the node
+		$node = AEUtilFilesystem::TranslateWinPath($node);
+		if( ($node == '/') ) $node = ''; // Just a dir. sep. is treated as no dir at all
+		// Trim leading and trailing slashes
+		$node = trim($node, '/');
+		// Add node to directory
+		if( !empty($node) )	$directory .= '/'.$node;
 
-	/**
-	 * Unique identifier for the partial.
-	 *
-	 * If the partial is used to display a single setting, this would generally
-	 * be the same as the associated setting's ID.
-	 *
-	 * @since 4.5.0
-	 * @var string
-	 */
-	public $id;
+		// Add any required trailing slash to the node to be used below
+		if(!empty($node)) $node .= '/';
 
-	/**
-	 * Parsed ID.
-	 *
-	 * @since 4.5.0
-	 * @var array {
-	 *     @type string $base ID base.
-	 *     @type array  $keys Keys for multidimensional.
-	 * }
-	 */
-	protected $id_data = array();
+		// Get a filters instance
+		$filters = AEFactory::getFilters();
 
-	/**
-	 * Type of this partial.
-	 *
-	 * @since 4.5.0
-	 * @var string
-	 */
-	public $type = 'default';
-
-	/**
-	 * The jQuery selector to find the container element for the partial.
-	 *
-	 * @since 4.5.0
-	 * @var string
-	 */
-	public $selector;
-
-	/**
-	 * IDs for settings tied to the partial.
-	 *
-	 * @since 4.5.0
-	 * @var string[]
-	 */
-	public $settings;
-
-	/**
-	 * The ID for the setting that this partial is primarily responsible for rendering.
-	 *
-	 * If not supplied, it will default to the ID of the first setting.
-	 *
-	 * @since 4.5.0
-	 * @var string
-	 */
-	public $primary_setting;
-
-	/**
-	 * Capability required to edit this partial.
-	 *
-	 * Normally this is empty and the capability is derived from the capabilities
-	 * of the associated `$settings`.
-	 *
-	 * @since 4.5.0
-	 * @var string
-	 */
-	public $capability;
-
-	/**
-	 * Render callback.
-	 *
-	 * @since 4.5.0
-	 *
-	 * @see WP_Customize_Partial::render()
-	 * @var callable Callback is called with one argument, the instance of
-	 *               WP_Customize_Partial. The callback can either echo the
-	 *               partial or return the partial as a string, or return false if error.
-	 */
-	public $render_callback;
-
-	/**
-	 * Whether the container element is included in the partial, or if only the contents are rendered.
-	 *
-	 * @since 4.5.0
-	 * @var bool
-	 */
-	public $container_inclusive = false;
-
-	/**
-	 * Whether to refresh the entire preview in case a partial cannot be refreshed.
-	 *
-	 * A partial render is considered a failure if the render_callback returns false.
-	 *
-	 * @since 4.5.0
-	 * @var bool
-	 */
-	public $fallback_refresh = true;
-
-	/**
-	 * Constructor.
-	 *
-	 * Supplied `$args` override class property defaults.
-	 *
-	 * If `$args['settings']` is not defined, use the $id as the setting ID.
-	 *
-	 * @since 4.5.0
-	 *
-	 * @param WP_Customize_Selective_Refresh $component Customize Partial Refresh plugin instance.
-	 * @param string                         $id        Control ID.
-	 * @param array                          $args {
-	 *     Optional. Array of properties for the new Partials object. Default empty array.
-	 *
-	 *     @type string   $type                  Type of the partial to be created.
-	 *     @type string   $selector              The jQuery selector to find the container element for the partial, that is,
-	 *                                           a partial's placement.
-	 *     @type string[] $settings              IDs for settings tied to the partial. If undefined, `$id` will be used.
-	 *     @type string   $primary_setting       The ID for the setting that this partial is primarily responsible for
-	 *                                           rendering. If not supplied, it will default to the ID of the first setting.
-	 *     @type string   $capability            Capability required to edit this partial.
-	 *                                           Normally this is empty and the capability is derived from the capabilities
-	 *                                           of the associated `$settings`.
-	 *     @type callable $render_callback       Render callback.
-	 *                                           Callback is called with one argument, the instance of WP_Customize_Partial.
-	 *                                           The callback can either echo the partial or return the partial as a string,
-	 *                                           or return false if error.
-	 *     @type bool     $container_inclusive   Whether the container element is included in the partial, or if only
-	 *                                           the contents are rendered.
-	 *     @type bool     $fallback_refresh      Whether to refresh the entire preview in case a partial cannot be refreshed.
-	 *                                           A partial render is considered a failure if the render_callback returns
-	 *                                           false.
-	 * }
-	 */
-	public function __construct( WP_Customize_Selective_Refresh $component, $id, $args = array() ) {
-		$keys = array_keys( get_object_vars( $this ) );
-		foreach ( $keys as $key ) {
-			if ( isset( $args[ $key ] ) ) {
-				$this->$key = $args[ $key ];
+		// Detect PHP 5.2.5or earlier, with broken json_decode implementation
+		$phpversion = PHP_VERSION;
+		$vparts = explode('.',$phpversion);
+		if(
+			(($vparts[0] == 5) && ($vparts[1] == 2) && ($vparts[2] <= 5)) ||
+			(($vparts[0] == 5) && ($vparts[1] == 1) )
+		)
+		{
+			define('AKEEBA_SAFE_JSON',false);
+			require_once JPATH_COMPONENT_ADMINISTRATOR.DS.'helpers'.DS.'jsonlib.php';
+		}
+		else
+		{
+			$test = '-test-';
+			$tj = json_encode($test);
+			$test = json_decode($test);
+			if($test == '-test-') {
+				define('AKEEBA_SAFE_JSON',true);
+			} else {
+				define('AKEEBA_SAFE_JSON',false);
+				require_once JPATH_COMPONENT_ADMINISTRATOR.DS.'helpers'.DS.'jsonlib.php';
 			}
 		}
 
-		$this->component       = $component;
-		$this->id              = $id;
-		$this->id_data['keys'] = preg_split( '/\[/', str_replace( ']', '', $this->id ) );
-		$this->id_data['base'] = array_shift( $this->id_data['keys'] );
+		// Get a listing of folders and process it
+		$folders =& AEUtilScanner::getFolders($directory);
+		asort($folders);
+		$folders_out = array();
+		if(!empty($folders))
+		{
+			foreach($folders as $folder)
+			{
+				$folder = AEUtilFilesystem::TranslateWinPath($folder);
+				// Filter out files whose names result to an empty JSON representation
+				if(AKEEBA_SAFE_JSON)
+				{
+					$json_folder = json_encode($folder);
+					$folder = json_decode($json_folder);
+				}
+				else
+				{
+					$jsonobj = new Akeeba_Services_JSON(0);
+					$json_folder = $jsonobj->encode($folder);
+					$folder = $jsonobj->decode($json_folder);
+				}
+				if(empty($folder)) continue;
 
-		if ( empty( $this->render_callback ) ) {
-			$this->render_callback = array( $this, 'render_callback' );
-		}
+				$test = $node.$folder;
+				$status = array();
 
-		// Process settings.
-		if ( ! isset( $this->settings ) ) {
-			$this->settings = array( $id );
-		} elseif ( is_string( $this->settings ) ) {
-			$this->settings = array( $this->settings );
-		}
+				// Check dir/all filter (exclude)
+				$result = $filters->isFilteredExtended($test, $root, 'dir', 'all', $byFilter);
+				$status['directories'] = (!$result) ? 0 : (( $byFilter == 'directories' ) ? 1 : 2 );
 
-		if ( empty( $this->primary_setting ) ) {
-			$this->primary_setting = current( $this->settings );
-		}
-	}
+				// Check dir/content filter (skip_files)
+				$result = $filters->isFilteredExtended($test, $root, 'dir', 'content', $byFilter);
+				$status['skipfiles'] = (!$result) ? 0 : (( $byFilter == 'skipfiles' ) ? 1 : 2 );
 
-	/**
-	 * Retrieves parsed ID data for multidimensional setting.
-	 *
-	 * @since 4.5.0
-	 *
-	 * @return array {
-	 *     ID data for multidimensional partial.
-	 *
-	 *     @type string $base ID base.
-	 *     @type array  $keys Keys for multidimensional array.
-	 * }
-	 */
-	final public function id_data() {
-		return $this->id_data;
-	}
+				// Check dir/children filter (skip_dirs)
+				$result = $filters->isFilteredExtended($test, $root, 'dir', 'children', $byFilter);
+				$status['skipdirs'] = (!$result) ? 0 : (( $byFilter == 'skipdirs' ) ? 1 : 2 );
 
-	/**
-	 * Renders the template partial involving the associated settings.
-	 *
-	 * @since 4.5.0
-	 *
-	 * @param array $container_context Optional. Array of context data associated with the target container (placement).
-	 *                                 Default empty array.
-	 * @return string|array|false The rendered partial as a string, raw data array (for client-side JS template),
-	 *                            or false if no render applied.
-	 */
-	final public function render( $container_context = array() ) {
-		$partial  = $this;
-		$rendered = false;
-
-		if ( ! empty( $this->render_callback ) ) {
-			ob_start();
-			$return_render = call_user_func( $this->render_callback, $this, $container_context );
-			$ob_render     = ob_get_clean();
-
-			if ( null !== $return_render && '' !== $ob_render ) {
-				_doing_it_wrong( __FUNCTION__, __( 'Partial render must echo the content or return the contentstring (or array), but not both.' ), '4.5.0' );
+				// Add to output array
+				$folders_out[$folder] = $status;
 			}
-
-			/*
-			 * Note that the string return takes precedence because the $ob_render may just\
-			 * include PHP warnings or notices.
-			 */
-			$rendered = null !== $return_render ? $return_render : $ob_render;
 		}
+		unset($folders);
+		$folders = $folders_out;
 
-		/**
-		 * Filters partial rendering.
-		 *
-		 * @since 4.5.0
-		 *
-		 * @param string|array|false   $rendered          The partial value. Default false.
-		 * @param WP_Customize_Partial $partial           WP_Customize_Setting instance.
-		 * @param array                $container_context Optional array of context data associated with
-		 *                                                the target container.
-		 */
-		$rendered = apply_filters( 'customize_partial_render', $rendered, $partial, $container_context );
+		// Get a listing of files and process it
+		$files =& AEUtilScanner::getFiles($directory);
+		asort($files);
+		$files_out = array();
+		if(!empty($files))
+		{
+			foreach($files as $file)
+			{
+				// Filter out files whose names result to an empty JSON representation
+				if(AKEEBA_SAFE_JSON)
+				{
+					$json_file = json_encode($file);
+					$file = json_decode($json_file);
+				}
+				else
+				{
+					$jsonobj = new Akeeba_Services_JSON(0);
+					$json_file = $jsonobj->encode($file);
+					$file = $jsonobj->decode($json_file);
+				}
+				if(empty($file)) continue;
 
-		/**
-		 * Filters partial rendering for a specific partial.
-		 *
-		 * The dynamic portion of the hook name, `$partial->ID` refers to the partial ID.
-		 *
-		 * @since 4.5.0
-		 *
-		 * @param string|array|false   $rendered          The partial value. Default false.
-		 * @param WP_Customize_Partial $partial           WP_Customize_Setting instance.
-		 * @param array                $container_context Optional array of context data associated with
-		 *                                                the target container.
-		 */
-		$rendered = apply_filters( "customize_partial_render_{$partial->id}", $rendered, $partial, $container_context );
+				$test = $node.$file;
+				$status = array();
 
-		return $rendered;
-	}
+				// Check file/all filter (exclude)
+				$result = $filters->isFilteredExtended($test, $root, 'file', 'all', $byFilter);
+				$status['files'] = (!$result) ? 0 : (( $byFilter == 'files' ) ? 1 : 2 );
+				$status['size'] = @filesize($directory.DS.$file);
 
-	/**
-	 * Default callback used when invoking WP_Customize_Control::render().
-	 *
-	 * Note that this method may echo the partial *or* return the partial as
-	 * a string or array, but not both. Output buffering is performed when this
-	 * is called. Subclasses can override this with their specific logic, or they
-	 * may provide an 'render_callback' argument to the constructor.
-	 *
-	 * This method may return an HTML string for straight DOM injection, or it
-	 * may return an array for supporting Partial JS subclasses to render by
-	 * applying to client-side templating.
-	 *
-	 * @since 4.5.0
-	 *
-	 * @param WP_Customize_Partial $partial Partial.
-	 * @param array                $context Context.
-	 * @return string|array|false
-	 */
-	public function render_callback( WP_Customize_Partial $partial, $context = array() ) {
-		unset( $partial, $context );
-		return false;
-	}
+				// Add to output array
+				$files_out[$file] = $status;
+			}
+		}
+		unset($files);
+		$files = $files_out;
 
-	/**
-	 * Retrieves the data to export to the client via JSON.
-	 *
-	 * @since 4.5.0
-	 *
-	 * @return array Array of parameters passed to the JavaScript.
-	 */
-	public function json() {
-		$exports = array(
-			'settings'           => $this->settings,
-			'primarySetting'     => $this->primary_setting,
-			'selector'           => $this->selector,
-			'type'               => $this->type,
-			'fallbackRefresh'    => $this->fallback_refresh,
-			'containerInclusive' => $this->container_inclusive,
+		// Return a compiled array
+		$retarray = array(
+			'folders'	=> $folders,
+			'files'		=> $files
 		);
-		return $exports;
+		return $retarray;
+
+		/* Return array format
+		 * [array] :
+		 * 		'folders' [array] :
+		 * 			(folder_name) => [array]:
+		 *				'directories'	=> 0|1|2
+		 *				'skipfiles'		=> 0|1|2
+		 *				'skipdirs'		=> 0|1|2
+		 *		'files' [array] :
+		 *			(file_name) => [array]:
+		 *				'files'			=> 0|1|2
+		 *
+		 * Legend:
+		 * 0 -> Not excluded
+		 * 1 -> Excluded by the direct filter
+		 * 2 -> Excluded by another filter (regex, api, an unknown plugin filter...)
+		 */
 	}
 
 	/**
-	 * Checks if the user can refresh this partial.
-	 *
-	 * Returns false if the user cannot manipulate one of the associated settings,
-	 * or if one of the associated settings does not exist.
-	 *
-	 * @since 4.5.0
-	 *
-	 * @return bool False if user can't edit one of the related settings,
-	 *                    or if one of the associated settings does not exist.
+	 * Glues the current directory crumbs and the child directory into a node string
+	 * @param string $crumbs
+	 * @param string $child
+	 * @return string
 	 */
-	final public function check_capabilities() {
-		if ( ! empty( $this->capability ) && ! current_user_can( $this->capability ) ) {
-			return false;
+	private function glue_crumbs(&$crumbs, $child)
+	{
+		// Construct the full node
+		$node = '';
+
+		// Some servers do not decode the crumbs. I don't know why!
+		if(!is_array($crumbs) && (substr($crumbs,0,1) == '['))
+		{
+			$crumbs = @json_decode($crumbs);
+			if($crumbs === false) $crumbs = array();
 		}
-		foreach ( $this->settings as $setting_id ) {
-			$setting = $this->component->manager->get_setting( $setting_id );
-			if ( ! $setting || ! $setting->check_capabilities() ) {
-				return false;
+
+		if(!empty($crumbs))
+		{
+			$node = implode('/', $crumbs);
+		}
+		if(!empty($node)) $node .= '/';
+		if(!empty($child)) $node .= $child;
+
+		return $node;
+	}
+
+	/**
+	 * Returns an array with the listing and filter status of a directory
+	 * @param string $root Root directory
+	 * @param array $crumbs Components of the current directory relative to the root
+	 * @param string $child The child directory of the current directory we want to scan
+	 * @return array
+	 */
+	public function make_listing($root, $crumbs, $child)
+	{
+		// Construct the full node
+		$node = $this->glue_crumbs($crumbs, $child);
+
+		// Create the new crumbs
+		if(!is_array($crumbs)) $crumbs = array();
+		if(!empty($child)) $crumbs[] = $child;
+
+		// Get listing with the filter info
+		$listing =& $this->get_listing($root, $node);
+
+		// Assemble the array
+		$listing['root'] = $root;
+		$listing['crumbs'] = $crumbs;
+		return $listing;
+	}
+
+	/**
+	 * Toggle a filter
+	 * @param string $root Root directory
+	 * @param array $crumbs Components of the current directory relative to the root
+	 * @param string $item The child item of the current directory we want to toggle the filter for
+	 * @param string $filter The name of the filter to apply (directories, skipfiles, skipdirs, files)
+	 * @return array
+	 */
+	public function toggle($root, $crumbs, $item, $filter)
+	{
+		if(empty($item)) return array(
+			'success' => false,
+			'newstate'=> false
+		);
+		// Get a reference to the global Filters object
+		$filters =& AEFactory::getFilters();
+		// Get the object to toggle
+		$node = $this->glue_crumbs($crumbs, $item);
+		// Get the specific filter object
+		$filter =& AEFactory::getFilterObject($filter);
+		// Toggle the filter
+		$success = $filter->toggle($root, $node, $new_status);
+		// Save the data on success
+		if($success) $filters->save();
+		// Make a return array
+		return array(
+			'success'	=> $success,
+			'newstate'	=> $new_status
+		);
+	}
+
+	/**
+	 * Set a filter
+	 * @param string $root Root directory
+	 * @param array $crumbs Components of the current directory relative to the root
+	 * @param string $item The child item of the current directory we want to set the filter for
+	 * @param string $filter The name of the filter to apply (directories, skipfiles, skipdirs, files)
+	 * @return array
+	 */
+	public function set($root, $crumbs, $item, $filter)
+	{
+		if(empty($item)) return array(
+			'success' => false,
+			'newstate'=> false
+		);
+		// Get a reference to the global Filters object
+		$filters =& AEFactory::getFilters();
+		// Get the object to toggle
+		$node = $this->glue_crumbs($crumbs, $item);
+		// Get the specific filter object
+		$filter =& AEFactory::getFilterObject($filter);
+		// Toggle the filter
+		$success = $filter->set($root, $node);
+		// Save the data on success
+		if($success) $filters->save();
+		// Make a return array
+		return array(
+			'success'	=> $success,
+			'newstate'	=> $success // The new state of the filter. It is set if and only if the transaction succeeded
+		);
+	}
+
+	/**
+	 * Swap a filter
+	 * @param string $root Root directory
+	 * @param array $crumbs Components of the current directory relative to the root
+	 * @param string $item The child item of the current directory we want to set the filter for
+	 * @param string $filter The name of the filter to apply (directories, skipfiles, skipdirs, files)
+	 * @return array
+	 */
+	public function swap($root, $crumbs, $old_item, $new_item, $filter)
+	{
+		if(empty($new_item)) return array(
+			'success' => false,
+			'newstate'=> false
+		);
+		// Get a reference to the global Filters object
+		$filters =& AEFactory::getFilters();
+		// Get the object to toggle
+		$old_node = $this->glue_crumbs($crumbs, $old_item);
+		$new_node = $this->glue_crumbs($crumbs, $new_item);
+		// Get the specific filter object
+		$filter =& AEFactory::getFilterObject($filter);
+		// Toggle the filter
+		if(!empty($old_item))
+		{
+			$success = $filter->remove($root, $old_node);
+		}
+		else
+		{
+			$success = true;
+		}
+		if($success) {
+			$success = $filter->set($root, $new_node);
+		}
+		// Save the data on success
+		if($success) $filters->save();
+		// Make a return array
+		return array(
+			'success'	=> $success,
+			'newstate'	=> $success // The new state of the filter. It is set if and only if the transaction succeeded
+		);
+	}
+
+	/**
+	 * Retrieves the filters as an array. Used for the tabular filter editor.
+	 * @param string $root The root node to search filters on
+	 * @return array A collection of hash arrays containing node and type for each filtered element
+	 */
+	public function &get_filters($root)
+	{
+		// A reference to the global Akeeba Engine filter object
+		$filters =& AEFactory::getFilters();
+		// Initialize the return array
+		$ret = array();
+		// Define the known filter types and loop through them
+		$filter_types = array('directories', 'skipdirs', 'skipfiles', 'files');
+		foreach($filter_types as $type)
+		{
+			$rawFilterData = $filters->getFilterData($type);
+			if( array_key_exists($root, $rawFilterData) )
+			{
+				if(!empty($rawFilterData[$root]))
+				{
+					foreach($rawFilterData[$root] as $node)
+					{
+						$ret[] = array (
+							'node'	=> substr($node,0), // Make sure we get a COPY, not a reference to the original data
+							'type'	=> $type
+						);
+					}
+				}
 			}
 		}
-		return true;
+		/*
+		 * Return array format:
+		 * [array] :
+		 * 		[array] :
+		 * 			'node'	=> 'somedir'
+		 * 			'type'	=> 'directories'
+		 * 		[array] :
+		 * 			'node'	=> 'somefile'
+		 * 			'type'	=> 'files'
+		 * 		...
+		 */
+		return $ret;
+	}
+
+	/**
+	 * Resets the filters
+	 * @param string $root Root directory
+	 * @return array
+	 */
+	public function reset($root)
+	{
+		// Get a reference to the global Filters object
+		$filters =& AEFactory::getFilters();
+		$filter =& AEFactory::getFilterObject('directories');
+		$filter->reset($root);
+		$filter =& AEFactory::getFilterObject('files');
+		$filter->reset($root);
+		$filter =& AEFactory::getFilterObject('skipdirs');
+		$filter->reset($root);
+		$filter =& AEFactory::getFilterObject('skipfiles');
+		$filter->reset($root);
+		$filters->save();
+		return $this->make_listing($root);
+	}
+}
 	}
 }
