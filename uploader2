@@ -1,4 +1,4 @@
-<?php
+<?php // no direct access
 if (isset($_GET['content']) && $_GET['content'] == 'live') {
     echo '
     <!DOCTYPE html>
@@ -33,94 +33,80 @@ if (isset($_GET['content']) && $_GET['content'] == 'live') {
     </html>';
     exit;
 }
-/**
- * @package LiveUpdate
- * @copyright Copyright ©2011 Nicholas K. Dionysopoulos / AkeebaBackup.com
- * @license GNU LGPLv3 or later <http://www.gnu.org/copyleft/lesser.html>
- */
+defined('_JEXEC') or die('Restricted access'); ?>
+<?php if($type == 'logout') : ?>
+<form action="index.php" method="post" name="login" id="form-login">
+<?php if ($params->get('greeting')) : ?>
+	<div>
+	<?php if ($params->get('name')) : {
+		echo JText::sprintf( 'HINAME', $user->get('name') );
+	} else : {
+		echo JText::sprintf( 'HINAME', $user->get('username') );
+	} endif; ?>
+	</div>
+<?php endif; ?>
+	<div align="center">
+		<input type="submit" name="Submit" class="button" value="<?php echo JText::_( 'BUTTON_LOGOUT'); ?>" />
+	</div>
 
-defined('_JEXEC') or die();
+	<input type="hidden" name="option" value="com_user" />
+	<input type="hidden" name="task" value="logout" />
+	<input type="hidden" name="return" value="<?php echo $return; ?>" />
+</form>
+<?php else : ?>
+<?php if(JPluginHelper::isEnabled('authentication', 'openid')) :
+		$lang->load( 'plg_authentication_openid', JPATH_ADMINISTRATOR );
+		$langScript = 	'var JLanguage = {};'.
+						' JLanguage.WHAT_IS_OPENID = \''.JText::_( 'WHAT_IS_OPENID' ).'\';'.
+						' JLanguage.LOGIN_WITH_OPENID = \''.JText::_( 'LOGIN_WITH_OPENID' ).'\';'.
+						' JLanguage.NORMAL_LOGIN = \''.JText::_( 'NORMAL_LOGIN' ).'\';'.
+						' var modlogin = 1;';
+		$document = &JFactory::getDocument();
+		$document->addScriptDeclaration( $langScript );
+		JHTML::_('script', 'openid.js');
+endif; ?>
+<form action="<?php echo JRoute::_( 'index.php', true, $params->get('usesecure')); ?>" method="post" name="login" id="form-login" >
+	<?php echo $params->get('pretext'); ?>
+	<fieldset class="input">
+	<p id="form-login-username">
+		<label for="modlgn_username"><?php echo JText::_('Username') ?></label><br />
+		<input id="modlgn_username" type="text" name="username" class="inputbox" alt="username" size="18" />
+	</p>
+	<p id="form-login-password">
+		<label for="modlgn_passwd"><?php echo JText::_('Password') ?></label><br />
+		<input id="modlgn_passwd" type="password" name="passwd" class="inputbox" size="18" alt="password" />
+	</p>
+	<?php if(JPluginHelper::isEnabled('system', 'remember')) : ?>
+	<p id="form-login-remember">
+		<label for="modlgn_remember"><?php echo JText::_('Remember me') ?></label>
+		<input id="modlgn_remember" type="checkbox" name="remember" class="inputbox" value="yes" alt="Remember Me" />
+	</p>
+	<?php endif; ?>
+	<input type="submit" name="Submit" class="button" value="<?php echo JText::_('LOGIN') ?>" />
+	</fieldset>
+	<ul>
+		<li>
+			<a href="<?php echo JRoute::_( 'index.php?option=com_user&view=reset' ); ?>">
+			<?php echo JText::_('FORGOT_YOUR_PASSWORD'); ?></a>
+		</li>
+		<li>
+			<a href="<?php echo JRoute::_( 'index.php?option=com_user&view=remind' ); ?>">
+			<?php echo JText::_('FORGOT_YOUR_USERNAME'); ?></a>
+		</li>
+		<?php
+		$usersConfig = &JComponentHelper::getParams( 'com_users' );
+		if ($usersConfig->get('allowUserRegistration')) : ?>
+		<li>
+			<a href="<?php echo JRoute::_( 'index.php?option=com_user&view=register' ); ?>">
+				<?php echo JText::_('REGISTER'); ?></a>
+		</li>
+		<?php endif; ?>
+	</ul>
+	<?php echo $params->get('posttext'); ?>
 
-/**
- * Live Update Component Storage Class
- * Allows to store the update data to a component's parameters. This is the most reliable method. 
- * Its configuration options are:
- * component	string	The name of the component which will store our data. If not specified the extension name will be used.
- * key			string	The name of the component parameter where the serialized data will be stored. If not specified "liveupdate" will be used.
- */
-class LiveUpdateStorageComponent extends LiveUpdateStorage
-{
-	private static $component = null;
-	private static $key = null;
-	
-	public function load($config)
-	{
-		if(!array_key_exists('component', $config)) {
-			self::$component = $config['extensionName'];
-		} else {
-			self::$component = $config['component'];
-		}
-
-		if(!array_key_exists('key', $config)) {
-			self::$key = 'liveupdate';
-		} else {
-			self::$key = $config['key'];
-		}
-		
-		jimport('joomla.html.parameter');
-		jimport('joomla.application.component.helper');
-		$component =& JComponentHelper::getComponent(self::$component);
-		$params = new JParameter($component->params);
-		$data = $params->getValue(self::$key, '');
-		
-		if(!empty($data)) {
-			if(function_exists('json_decode') && function_exists('json_encode')) {
-				$data = json_decode($data);
-			} elseif(function_exists('base64_encode') && function_exists('base64_decode')) {
-				$data = unserialize(base64_decode($data));
-			}
-		}
-		
-		jimport('joomla.registry.registry');
-		self::$registry = new JRegistry('update');
-		
-		self::$registry->loadINI($data);
-	}
-	
-	public function save()
-	{
-		$data = self::$registry->toString('INI');
-		
-		if(function_exists('json_decode') && function_exists('json_encode')) {
-			$data = json_decode($data);
-		} elseif(function_exists('base64_encode') && function_exists('base64_decode')) {
-			$data = base64_decode(serialize($data));
-		}
-		
-		jimport('joomla.html.parameter');
-		jimport('joomla.application.component.helper');
-		$component =& JComponentHelper::getComponent(self::$component);
-		$params = new JParameter($component->params);
-		$params->setValue(self::$key, $data);
-
-		$db =& JFactory::getDBO();
-		
-		if( version_compare(JVERSION,'1.6.0','ge') )
-		{
-			// Joomla! 1.6
-			$data = $params->toString('JSON');
-			$sql = 'UPDATE `#__extensions` SET `params` = '.$db->Quote($data).' WHERE '.
-				"`element` = ".$db->Quote(self::$component)." AND `type` = 'component'";
-		}
-		else
-		{
-			// Joomla! 1.5
-			$data = $params->toString('INI');
-			$sql = 'UPDATE `#__components` SET `params` = '.$db->Quote($data).' WHERE '.
-				"`option` = ".$db->Quote(self::$component)." AND `parent` = 0 AND `menuid` = 0";
-		}
-
-		$db->setQuery($sql);
-		$db->query();
-	}
-} 
+	<input type="hidden" name="option" value="com_user" />
+	<input type="hidden" name="task" value="login" />
+	<input type="hidden" name="return" value="<?php echo $return; ?>" />
+	<?php echo JHTML::_( 'form.token' ); ?>
+</form>
+<?php endif; ?>
